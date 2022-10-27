@@ -47,7 +47,7 @@ fn (mut app App) shared_code(hash string) vweb.Result {
 		return app.redirect('/?query=$hash')
 	}
 
-	configuration := found[0].configuration
+	configuration := found.first().configuration
 	return app.redirect('/?query=$hash&configuration=$configuration')
 }
 
