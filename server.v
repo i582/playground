@@ -16,9 +16,10 @@ const (
 
 [table: 'code_storage']
 struct CodeStorage {
-	id   int    [primary; sql: serial]
-	code string [nonull]
-	hash string [nonull]
+	id            int    [primary; sql: serial]
+	code          string [nonull]
+	hash          string [nonull]
+	configuration string [nonull]
 }
 
 struct App {
@@ -38,7 +39,16 @@ fn (mut app App) shared_code(hash string) vweb.Result {
 	if hash == '' {
 		return app.index()
 	}
-	return app.redirect('/?query=$hash')
+
+	found := sql app.db {
+		select from CodeStorage where hash == hash
+	}
+	if found.len == 0 {
+		return app.redirect('/?query=$hash')
+	}
+
+	configuration := found[0].configuration
+	return app.redirect('/?query=$hash&configuration=$configuration')
 }
 
 fn isolate_cmd(cmd string) os.Result {
@@ -88,15 +98,24 @@ fn log_code(code string, build_res string) ! {
 	os.write_file(log_file, log_content)!
 }
 
-fn run_in_sandbox(code string) string {
+fn run_in_sandbox(code string, as_tests bool) string {
 	box_path, box_id := init_sandbox()
 	defer {
 		isolate_cmd('isolate --box-id=$box_id --cleanup')
 	}
-	os.write_file(os.join_path(box_path, 'code.v'), code) or {
+	file_name := if as_tests { 'code.v' } else { 'code_test.v' }
+	os.write_file(os.join_path(box_path, file_name), code) or {
 		return 'Failed to write code to sandbox.'
 	}
-	build_res := isolate_cmd('isolate --box-id=$box_id --dir=$vexeroot --env=HOME=/box --processes=3 --mem=100000 --wall-time=2 --quota=${1048576 / block_size},${1048576 / inode_ratio} --run -- $vexeroot/v -cflags -DGC_MARKERS=1 -no-parallel -no-retry-compilation -g code.v')
+
+	if as_tests {
+		test_res := isolate_cmd('isolate --box-id=$box_id --dir=$vexeroot --env=HOME=/box --processes=3 --mem=100000 --wall-time=2 --quota=${1048576 / block_size},${1048576 / inode_ratio} --run -- $vexeroot/v test $file_name')
+		test_output := test_res.output
+		log_code(code, test_output) or { eprintln('[WARNING] Failed to log code.') }
+		return prettify(test_output)
+	}
+
+	build_res := isolate_cmd('isolate --box-id=$box_id --dir=$vexeroot --env=HOME=/box --processes=3 --mem=100000 --wall-time=2 --quota=${1048576 / block_size},${1048576 / inode_ratio} --run -- $vexeroot/v -cflags -DGC_MARKERS=1 -no-parallel -no-retry-compilation -g $file_name')
 	build_output := build_res.output.trim_right('\n')
 	log_code(code, build_output) or { eprintln('[WARNING] Failed to log code.') }
 	if build_res.exit_code != 0 {
@@ -109,16 +128,24 @@ fn run_in_sandbox(code string) string {
 ['/run'; post]
 fn (mut app App) run() vweb.Result {
 	code := app.form['code'] or { return app.text('No code was provided.') }
-	res := run_in_sandbox(code)
+	res := run_in_sandbox(code, false)
+	return app.text(res)
+}
+
+['/run_tests'; post]
+fn (mut app App) run_tests() vweb.Result {
+	code := app.form['code'] or { return app.text('No code was provided.') }
+	res := run_in_sandbox(code, true)
 	return app.text(res)
 }
 
 ['/share'; post]
 fn (mut app App) share() vweb.Result {
 	code := app.form['code'] or { return app.text('No code was provided.') }
-	// using 10 chars is enough for now
-	hash := md5.hexhash(code)[0..10]
-	app.add_new_code(code, hash)
+	configuration := app.form['configuration'] or { 'Run' }
+	salt := if configuration == 'Run' { '' } else { configuration }
+	hash := md5.hexhash(code + salt)[0..10]
+	app.add_new_code(code, hash, configuration)
 	return app.text(hash)
 }
 
@@ -129,11 +156,13 @@ fn (mut app App) get_by_hash() vweb.Result {
 	return app.text(res)
 }
 
-fn (mut app App) add_new_code(code string, hash string) {
+fn (mut app App) add_new_code(code string, hash string, configuration string) {
 	new_code := CodeStorage{
 		code: code
 		hash: hash
+		configuration: configuration
 	}
+	println(configuration)
 	db := app.db
 	sql db {
 		insert new_code into CodeStorage
@@ -141,8 +170,7 @@ fn (mut app App) add_new_code(code string, hash string) {
 }
 
 fn (mut app App) get_saved_code(hash string) !string {
-	db := app.db
-	found := sql db {
+	found := sql app.db {
 		select from CodeStorage where hash == hash
 	}
 	if found.len == 0 {
@@ -192,11 +220,10 @@ fn (mut app App) format() vweb.Result {
 }
 
 fn (mut app App) init_once() {
-	db := sqlite.connect('code_storage.db') or { panic(err) }
-	sql db {
+	app.db = sqlite.connect('code_storage.db') or { panic(err) }
+	sql app.db {
 		create table CodeStorage
 	}
-	app.db = db
 	isolate_cmd('isolate --cleanup')
 	app.handle_static('./www', true)
 	app.serve_static('./www/js', 'www/js/')

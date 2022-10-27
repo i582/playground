@@ -18,6 +18,9 @@ class Playground {
     private readonly themeManager: ThemeManager
     private readonly examplesManager: ExamplesManager
     private readonly helpManager: HelpManager
+    private readonly runConfigurationManager: RunConfigurationManager
+
+    private runAsTestsConsumer: () => boolean
 
     /**
      * @param editorElement - The element that will contain the playground.
@@ -40,6 +43,19 @@ class Playground {
         this.examplesManager.mount()
 
         this.helpManager = new HelpManager(editorElement)
+
+        this.runConfigurationManager = new RunConfigurationManager(this.queryParams)
+        this.runConfigurationManager.registerOnChange((configuration: RunConfigurationType): void => {
+        })
+        this.runConfigurationManager.registerOnSelect((configuration: RunConfigurationType): void => {
+            this.runConfigurationManager.toggleConfigurationsList()
+            this.run()
+        })
+        this.runConfigurationManager.setupConfiguration()
+    }
+
+    public registerRunAsTestsConsumer(consumer: () => boolean): void {
+        this.runAsTestsConsumer = consumer
     }
 
     /**
@@ -56,6 +72,15 @@ class Playground {
         actionButton.addEventListener("click", callback)
     }
 
+    public run(): void {
+        if (this.runAsTestsConsumer()) {
+            this.runTests()
+            return
+        }
+
+        this.runCode()
+    }
+
     public runCode(): void {
         this.clearTerminal()
         this.writeToTerminal("Running code...")
@@ -69,6 +94,22 @@ class Playground {
             .catch(err => {
                 console.log(err)
                 this.writeToTerminal("Can't run code. Please try again.")
+            })
+    }
+
+    public runTests(): void {
+        this.clearTerminal()
+        this.writeToTerminal("Running tests...")
+
+        const code = this.editor.getCode()
+        CodeRunner.runTests(code)
+            .then(result => {
+                this.clearTerminal()
+                this.writeToTerminal(result.output)
+            })
+            .catch(err => {
+                console.log(err)
+                this.writeToTerminal("Can't run tests. Please try again.")
             })
     }
 
@@ -98,7 +139,8 @@ class Playground {
         this.clearTerminal()
 
         const code = this.editor.getCode()
-        CodeRunner.shareCode(code)
+        const configuration = this.runConfigurationManager.getCurrentConfiguration()
+        CodeRunner.shareCode(code, configuration)
             .then(result => {
                 this.writeToTerminal("Code shared successfully!")
 

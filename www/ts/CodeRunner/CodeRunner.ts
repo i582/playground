@@ -35,6 +35,24 @@ class CodeRunner {
             .then(output => new RunCodeResult(output))
     }
 
+    public static runTests(code: string): Promise<RunCodeResult> {
+        const data = new FormData()
+        data.append("code", code)
+
+        return fetch("/run_tests", {
+            method: "post",
+            body: data,
+        })
+            .then(resp => {
+                if (resp.status != 200) {
+                    throw new Error("Can't run tests")
+                }
+
+                return resp.text()
+            })
+            .then(output => new RunCodeResult(output))
+    }
+
     public static formatCode(code: string): Promise<FormatCodeResult> {
         const data = new FormData()
         data.append("code", code)
@@ -47,9 +65,10 @@ class CodeRunner {
             .then(data => JSON.parse(data) as FormatCodeResult)
     }
 
-    public static shareCode(code: string): Promise<ShareCodeResult> {
+    public static shareCode(code: string, configuration: RunConfigurationType): Promise<ShareCodeResult> {
         const data = new FormData()
         data.append("code", code)
+        data.append("configuration", RunConfigurationType[configuration])
 
         return fetch("/share", {
             method: "post",
