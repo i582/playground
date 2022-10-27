@@ -103,7 +103,7 @@ fn run_in_sandbox(code string, as_tests bool) string {
 	defer {
 		isolate_cmd('isolate --box-id=$box_id --cleanup')
 	}
-	file_name := if as_tests { 'code.v' } else { 'code_test.v' }
+	file_name := if as_tests { 'code_test.v' } else { 'code.v' }
 	os.write_file(os.join_path(box_path, file_name), code) or {
 		return 'Failed to write code to sandbox.'
 	}
